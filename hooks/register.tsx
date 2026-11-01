@@ -3,10 +3,13 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Outfit } from '../types'
 import { mascotSvg, mascotText } from './mascot'
+import { parseSewn, SEW_SYSTEM, sewPrompt } from './sew'
 
 const PANE = 'wardrobe'
 const TITLE = 'Гардероб Claude'
+const SEWN_LIMIT = 12
 const current = atom({ plugin: 'costumes', key: 'current' } as const, null)
+const isSewing = atom({ plugin: 'costumes', key: 'isSewing' } as const, false)
 
 // Purely cosmetic: an outfit dresses the mascot above the prompt and never
 // touches what Claude writes.
@@ -36,6 +39,51 @@ const wear = async ($: EngineInterface, outfit: Outfit | null) => {
 
 const openWardrobe = ($: EngineInterface) => $.ui.open({ id: PANE, title: TITLE })
 
+const sewnList = async ($: EngineInterface) =>
+  ((await $.store.get('sewn')) as Outfit[] | undefined) ?? []
+
+// Asks a model to draw the outfit described, keeps it among the sewn ones
+// and dresses the mascot in it; answers what to tell the person.
+const sew = async ($: EngineInterface, description: string): Promise<string> => {
+  if (await read($, isSewing)) {
+    return 'Уже шью другой костюм, подожди немного.'
+  }
+  await update($, isSewing, () => true)
+  $.ui.toast('🪡 Шью костюм…')
+  try {
+    const reply = await $.model.complete({
+      model: 'sonnet',
+      system: SEW_SYSTEM,
+      prompt: sewPrompt(description),
+      maxTokens: 4000,
+      effort: 'low',
+      timeoutMs: 120_000,
+    })
+    if (!reply.isAnswered) {
+      return 'Не получилось сшить: модель не ответила. Попробуй ещё раз.'
+    }
+    const sewn = parseSewn(reply.text)
+    if (!sewn) {
+      return 'Не получилось сшить: выкройка вышла кривая. Попробуй ещё раз или опиши иначе.'
+    }
+    const outfit: Outfit = { id: `sewn-${await $.clock.now()}`, ...sewn }
+    const list = [...(await sewnList($)), outfit].slice(-SEWN_LIMIT)
+    await $.store.set('sewn', list)
+    await wear($, outfit)
+
+    return `Сшито и надето: ${outfit.emoji} ${outfit.name}`
+  } finally {
+    await update($, isSewing, () => false)
+  }
+}
+
+const unpick = async ($: EngineInterface, outfit: Outfit) => {
+  await $.store.set('sewn', (await sewnList($)).filter(o => o.id !== outfit.id))
+  if ((await read($, current))?.id === outfit.id) {
+    await wear($, null)
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -45,15 +93,15 @@ export const register: Register = on => {
     })
     await $.command.register({
       name: 'costume-sew',
-      description: 'Сшить свой костюм: эмодзи, которое маскот наденет как шляпу',
-      argumentHint: '<эмодзи>',
+      description: 'Сшить новый костюм маскоту по описанию',
+      argumentHint: '<описание>',
     })
 
     // Earlier versions showed the outfit in the status line.
     $.ui.status(undefined)
     const saved = (await $.store.get('current')) as Outfit | null | undefined
     if (saved) {
-      await wear($, { id: saved.id, emoji: saved.emoji, name: saved.name })
+      await wear($, saved)
     }
 
     return next(e)
@@ -83,15 +131,12 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'costume-sew' }, async ($, e) => {
-    const emoji = e.args.trim()
-    if (!emoji || [...emoji].length > 8) {
-      return { text: 'Дай одно эмодзи: /costume-sew 🎃' }
+    const description = e.args.trim()
+    if (!description) {
+      return { text: 'Опиши костюм: /costume-sew космический ковбой с лассо' }
     }
-    const outfit: Outfit = { id: 'custom', emoji, name: 'Свой костюм' }
-    await $.store.set('custom', outfit)
-    await wear($, outfit)
 
-    return { text: `Сшито и надето: ${emoji}` }
+    return { text: await sew($, description) }
   })
 
   // The mascot stands on the prompt box, tapping its paws while Claude works.
@@ -104,7 +149,12 @@ export const register: Register = on => {
     // The terminal's table holds no real Svg: it gets Claude Code's glyph mascot.
     const Svg = e.surface !== 'terminal' && 'Svg' in elements ? elements.Svg : undefined
     const worn = await read($, current)
-    const look = { outfitId: worn?.id ?? null, emoji: worn?.emoji, isBusy: e.props.isWorking }
+    const look = {
+      outfitId: worn?.id ?? null,
+      emoji: worn?.emoji,
+      art: worn?.art,
+      isBusy: e.props.isWorking || (await read($, isSewing)),
+    }
 
     return (
       <Box flexDirection="row" justifyContent="flex-end" alignItems="flex-end" gap={1}>
@@ -127,10 +177,12 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const elements = $.ui.resolve(e)
+    const { Box, Button, Text } = elements
+    const Input = e.surface !== 'mobile' && 'Input' in elements ? elements.Input : undefined
     const worn = await read($, current)
-    const custom = (await $.store.get('custom')) as Outfit | undefined
-    const outfits = custom ? [...WARDROBE, custom] : WARDROBE
+    const sewing = await read($, isSewing)
+    const sewn = await sewnList($)
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -138,7 +190,7 @@ export const register: Register = on => {
           Сейчас: {worn ? `${worn.emoji} ${worn.name}` : 'без костюма'}
         </Text>
         <Box flexDirection="row" flexWrap="wrap" gap={1}>
-          {outfits.map(outfit => (
+          {WARDROBE.map(outfit => (
             <Button
               key={outfit.id}
               variant={worn?.id === outfit.id ? 'primary' : undefined}
@@ -151,7 +203,40 @@ export const register: Register = on => {
         <Button key="off" dimColor onPress={() => wear($, null)}>
           Снять костюм
         </Button>
-        <Text dimColor>Свой костюм: /costume-sew 🎃</Text>
+
+        <Text bold>Сшитые костюмы</Text>
+        {sewn.length === 0 && <Text dimColor>Пока ничего не сшито.</Text>}
+        {sewn.map(outfit => (
+          <Box key={`row-${outfit.id}`} flexDirection="row" gap={1}>
+            <Button
+              key={outfit.id}
+              variant={worn?.id === outfit.id ? 'primary' : undefined}
+              onPress={() => wear($, outfit)}
+            >
+              {outfit.emoji} {outfit.name}
+            </Button>
+            <Button key={`unpick-${outfit.id}`} dimColor onPress={() => unpick($, outfit)}>
+              Распороть
+            </Button>
+          </Box>
+        ))}
+        {sewing ? (
+          <Text>🪡 Шью костюм…</Text>
+        ) : Input ? (
+          <Input
+            key="sew"
+            label="Сшить новый"
+            placeholder="Опиши костюм: космический ковбой с лассо"
+            submitLabel="Сшить"
+            onSubmit={async description => {
+              if (description.trim()) {
+                $.ui.toast(await sew($, description.trim()))
+              }
+            }}
+          />
+        ) : (
+          <Text dimColor>Сшить новый: /costume-sew описание</Text>
+        )}
       </Box>
     )
   })

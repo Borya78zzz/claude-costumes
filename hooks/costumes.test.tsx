@@ -33,6 +33,7 @@ const engine = (on: any) => {
   on('command.register', (_: unknown, e: { name: string }) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('prompt.submit', (_: unknown, e: { text: string; context?: string[] }) => ({
     text: e.text,
@@ -75,17 +76,66 @@ test('маскот стоит на поле ввода в костюме и ст
   await term.unmount()
 })
 
-test('/costume off снимает костюм, /costume-sew надевает эмодзи', async ($, on) => {
+const USAGE = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_creation_input_tokens: 0,
+  cache_read_input_tokens: 0,
+}
+
+const answer = (text: string) => () => ({ value: { isAnswered: true, text, usage: USAGE } })
+
+test('/costume-sew шьёт костюм по описанию, «Распороть» его убирает', async ($, on) => {
   engine(on)
+  mock.clock(on, { now: 1000 })
+  const drawn = {
+    emoji: '🍞',
+    name: 'Батон',
+    back: '',
+    front: '<rect x="2" y="1" width="12" height="2" fill="#e0b070"/>',
+    face: '<rect x="7" y="7" width="2" height="0.5" fill="#3a2418"/>',
+  }
+  let asked = ''
+  on('model.complete', (_: unknown, e: { prompt: string }) => {
+    asked = e.prompt
+    return answer(`Вот костюм: ${JSON.stringify(drawn)}`)()
+  })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
-  await $.command.run({ command: 'costume-sew', args: '🎃' })
-  let ui = await $.ui.mount({ ...band(false), surface: 'desktop' })
-  expect(String((await ui.find({ type: 'Svg' }))?.props?.source)).toContain('🎃')
+  await $.command.run({ command: 'costume-sew', args: 'костюм хлеба' })
+  expect(asked).toContain('костюм хлеба')
+
+  const mascot = await $.ui.mount({ ...band(false), surface: 'desktop' })
+  const suit = String((await mascot.find({ type: 'Svg' }))?.props?.source)
+  // Worn over the body with the face cut out, the face layer over the eyes.
+  expect(suit).toContain('<g mask="url(#face)"><rect x="2" y="1" width="12" height="2" fill="#e0b070"/></g>')
+  expect(suit.indexOf('#3a2418')).toBeGreaterThan(suit.indexOf('class="eye" x="11"'))
+  await mascot.unmount()
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /Сейчас/ }))?.text).toBe('Сейчас: 🍞 Батон')
+  await ui.press({ key: 'unpick-sewn-1000' })
+  expect((await ui.find({ type: 'Text', text: /Сейчас/ }))?.text).toBe('Сейчас: без костюма')
   await ui.unmount()
 
+  await $.command.run({ command: 'costume', args: 'cat' })
   await $.command.run({ command: 'costume', args: 'off' })
-  ui = await $.ui.mount({ ...band(false), surface: 'desktop' })
-  expect(String((await ui.find({ type: 'Svg' }))?.props?.source)).not.toContain('🎃')
+  const bare = await $.ui.mount({ ...band(false), surface: 'desktop' })
+  expect(String((await bare.find({ type: 'Svg' }))?.props?.source)).not.toContain('#e0b070')
+  await bare.unmount()
+})
+
+test('выкройка со скриптом или ссылкой не надевается', async ($, on) => {
+  engine(on)
+  mock.clock(on)
+  on(
+    'model.complete',
+    answer(JSON.stringify({ emoji: '😈', name: 'Злой', front: '<script>alert(1)</script>' })),
+  )
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.command.run({ command: 'costume-sew', args: 'что-то' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /Сейчас/ }))?.text).toBe('Сейчас: без костюма')
   await ui.unmount()
 })

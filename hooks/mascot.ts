@@ -8,7 +8,7 @@ const sparkle = (x: number, y: number, size: number, color: string, delay: numbe
   `<text class="twinkle" style="animation-delay:${delay}s" x="${x}" y="${y}" font-size="${size}" fill="${color}" text-anchor="middle">✦</text>`
 
 // What each outfit wears: drawn behind the body (`back`) or on top of it (`front`).
-const OUTFITS: Record<string, { back?: string; front: string; hideLeftEye?: true }> = {
+export const OUTFITS: Record<string, OutfitArt> = {
   cat: {
     back: `<path class="tail" d="M14 8 Q17.5 8 17 4" stroke="${SKIN}" stroke-width="1" fill="none" stroke-linecap="square"/>`,
     front: `
@@ -124,16 +124,43 @@ const STYLE = `
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 `
 
-export type MascotLook = { outfitId: string | null; emoji?: string; isBusy: boolean }
+const escapeXml = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-export const mascotSvg = ({ outfitId, emoji, isBusy }: MascotLook): string => {
-  const outfit = outfitId ? OUTFITS[outfitId] : undefined
-  // A sewn outfit has no drawing of its own: its emoji floats above the head.
+// `back` sits behind the body, `front` over it. A sewn outfit may add `face`:
+// what belongs on the face (glasses, a mustache), drawn over the eyes.
+export type OutfitArt = { back?: string; front: string; face?: string; hideLeftEye?: true }
+
+// The face a sewn outfit's `front` leaves open, whatever it draws: the eyes
+// and the cheeks below them.
+export const FACE = { x: 3.2, y: 4.2, width: 9.6, height: 4, rx: 1.2 }
+
+export type MascotLook = {
+  outfitId: string | null
+  emoji?: string
+  // A sewn outfit carries its own drawing.
+  art?: OutfitArt
+  isBusy: boolean
+}
+
+export const mascotSvg = ({ outfitId, emoji, art, isBusy }: MascotLook): string => {
+  const outfit = art ?? (outfitId ? OUTFITS[outfitId] : undefined)
+  // An outfit with no drawing of its own wears its emoji above the head.
   const badge =
     outfitId && !outfit && emoji
-      ? `<text x="8" y="0.8" font-size="3.4" text-anchor="middle">${emoji}</text>${sparkle(13.5, 0, 1.4, '#ffd76a', 0.5)}`
+      ? `<text x="8" y="0.8" font-size="3.4" text-anchor="middle">${escapeXml(emoji)}</text>${sparkle(13.5, 0, 1.4, '#ffd76a', 0.5)}`
       : ''
   const leftEye = outfit?.hideLeftEye ? '' : `<rect class="eye" x="4" y="5" width="1" height="2" fill="${INK}"/>`
+  // A sewn outfit is worn over the body with the face cut out of it, its
+  // `face` layer and the eyes over that; a built-in one draws as designed.
+  const isSewn = art !== undefined
+  const worn = isSewn
+    ? `<mask id="face" maskUnits="userSpaceOnUse" x="-4" y="-8" width="24" height="20">
+      <rect x="-4" y="-8" width="24" height="20" fill="#fff"/>
+      <rect x="${FACE.x}" y="${FACE.y}" width="${FACE.width}" height="${FACE.height}" rx="${FACE.rx}" fill="#000"/>
+    </mask>
+    <g mask="url(#face)">${art.front}</g>`
+    : (outfit?.front ?? '')
   const shine = outfitId === 'anime'
     ? `<rect x="4" y="5" width="0.45" height="0.45" fill="#fff"/><rect x="11" y="5" width="0.45" height="0.45" fill="#fff"/>`
     : ''
@@ -149,10 +176,11 @@ export const mascotSvg = ({ outfitId, emoji, isBusy }: MascotLook): string => {
     <rect class="arm arm-l" x="0" y="5" width="2" height="2" fill="${SKIN}"/>
     <rect class="arm arm-r" x="14" y="5" width="2" height="2" fill="${SKIN}"/>
     <rect x="2" y="3" width="12" height="6" fill="${SKIN}"/>
+    ${isSewn ? worn : ''}
     ${leftEye}
     <rect class="eye" x="11" y="5" width="1" height="2" fill="${INK}"/>
     ${shine}
-    ${outfit?.front ?? ''}
+    ${isSewn ? (art.face ?? '') : worn}
     ${badge}
   </g>
 </g>
