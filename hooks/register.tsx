@@ -2,12 +2,11 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Outfit } from '../types'
-import { mascotSvg } from './mascot'
+import { mascotSvg, mascotText } from './mascot'
 
 const PANE = 'wardrobe'
 const TITLE = 'Гардероб Claude'
 const current = atom({ plugin: 'costumes', key: 'current' } as const, null)
-const isBusy = atom({ plugin: 'costumes', key: 'isBusy' } as const, false)
 
 // Purely cosmetic: an outfit dresses the mascot above the prompt and never
 // touches what Claude writes.
@@ -95,36 +94,20 @@ export const register: Register = on => {
     return { text: `Сшито и надето: ${emoji}` }
   })
 
-  // The mascot taps its paws while Claude works on the main thread.
-  on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) {
-      await update($, isBusy, () => true)
+  // The mascot stands on the prompt box, tapping its paws while Claude works.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey || e.props.view.agentId !== undefined) {
+      return next(e)
     }
-
-    return next(e)
-  })
-
-  on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) {
-      await update($, isBusy, () => false)
-    }
-
-    return next(e)
-  })
-
-  // The mascot sits in the prompt footer, beside the wardrobe button: the
-  // band above the prompt comes in a card of the desktop's own.
-  on('ui.render', { component: 'SessionMode' }, async ($, e) => {
     const elements = $.ui.resolve(e)
     const { Box, Button, Text } = elements
-    // The terminal's table holds no real Svg: the outfit's emoji stands in.
+    // The terminal's table holds no real Svg: it gets Claude Code's glyph mascot.
     const Svg = e.surface !== 'terminal' && 'Svg' in elements ? elements.Svg : undefined
     const worn = await read($, current)
-    const look = { outfitId: worn?.id ?? null, emoji: worn?.emoji, isBusy: await read($, isBusy) }
+    const look = { outfitId: worn?.id ?? null, emoji: worn?.emoji, isBusy: e.props.isWorking }
 
     return (
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        {e.props.modes.length > 0 && <Text dimColor>{e.props.modes.join(' & ')}</Text>}
+      <Box flexDirection="row" justifyContent="flex-end" alignItems="flex-end" gap={1}>
         <Button key="wardrobe" plain dimColor onPress={() => openWardrobe($)}>
           👗
         </Button>
@@ -132,12 +115,12 @@ export const register: Register = on => {
           <Svg
             source={mascotSvg(look)}
             alt={`Маскот Claude${worn ? ` в костюме «${worn.name}»` : ''}`}
-            width={40}
-            height={33}
+            width={84}
+            height={70}
             isInteractive
           />
         ) : (
-          worn && <Text>{worn.emoji}</Text>
+          <Text color="#D97757">{`${worn ? `${worn.emoji}\n` : ''}${mascotText.join('\n')}`}</Text>
         )}
       </Box>
     )

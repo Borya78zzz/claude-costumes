@@ -158,3 +158,6 @@ export const mascotSvg = ({ outfitId, emoji, isBusy }: MascotLook): string => {
 </g>
 </svg>`
 }
+
+// The terminal draws no SVG: Claude Code's own block-glyph mascot stands in.
+export const mascotText = [' ▐▛███▜▌', '▝▜█████▛▘', '  ▘▘ ▝▝']

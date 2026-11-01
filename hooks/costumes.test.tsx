@@ -14,14 +14,25 @@ const PANE = {
   },
 } as const
 
-const FOOTER = { plugin: 'costumes', component: 'SessionMode', props: { modes: [] } } as const
+const band = (isWorking: boolean) =>
+  ({
+    plugin: 'costumes',
+    component: 'AbovePrompt',
+    props: {
+      hasSurvey: false,
+      isWorking,
+      maxRows: 12,
+      bodyColumns: 80,
+      scroll: { offset: 0, bodyRows: 11 },
+      view: {},
+    },
+  }) as const
 
 const engine = (on: any) => {
   mock.store(on)
   on('command.register', (_: unknown, e: { name: string }) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.status', () => ({ value: undefined }))
-  on('turn.start', (_: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('prompt.submit', (_: unknown, e: { text: string; context?: string[] }) => ({
     text: e.text,
@@ -43,25 +54,24 @@ test('костюм выбирается в гардеробе и не трога
   expect(sent.context ?? []).toEqual([])
 })
 
-test('маскот сидит под полем ввода в костюме и стучит лапками, пока Claude работает', async ($, on) => {
+test('маскот стоит на поле ввода в костюме и стучит лапками, пока Claude работает', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await $.command.run({ command: 'costume', args: 'wizard' })
 
-  const idle = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+  const idle = await $.ui.mount({ ...band(false), surface: 'desktop' })
   const still = String((await idle.find({ type: 'Svg' }))?.props?.source)
   expect(still).toContain('#5b3fa8')
   expect(still).toContain('class="idle"')
   await idle.unmount()
 
-  await $.turn.start({ text: 'привет', turnId: 't1' })
-  const busy = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+  const busy = await $.ui.mount({ ...band(true), surface: 'desktop' })
   expect(String((await busy.find({ type: 'Svg' }))?.props?.source)).toContain('class="busy"')
   expect(await busy.find({ type: 'Button', key: 'wardrobe' })).toBeDefined()
   await busy.unmount()
 
-  const term = await $.ui.mount({ ...FOOTER, surface: 'terminal' })
-  expect((await term.find({ type: 'Text', text: /🧙/ }))?.text).toBe('🧙')
+  const term = await $.ui.mount({ ...band(false), surface: 'terminal' })
+  expect((await term.find({ type: 'Text', text: /▐▛███▜▌/ }))?.text).toContain('🧙')
   await term.unmount()
 })
 
@@ -70,12 +80,12 @@ test('/costume off снимает костюм, /costume-sew надевает э
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
   await $.command.run({ command: 'costume-sew', args: '🎃' })
-  let ui = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+  let ui = await $.ui.mount({ ...band(false), surface: 'desktop' })
   expect(String((await ui.find({ type: 'Svg' }))?.props?.source)).toContain('🎃')
   await ui.unmount()
 
   await $.command.run({ command: 'costume', args: 'off' })
-  ui = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+  ui = await $.ui.mount({ ...band(false), surface: 'desktop' })
   expect(String((await ui.find({ type: 'Svg' }))?.props?.source)).not.toContain('🎃')
   await ui.unmount()
 })
