@@ -1,0 +1,6 @@
+{
+  "name": "costumes",
+  "version": "0.1.0",
+  "description": "Маскот Claude на поле ввода, которого можно наряжать в костюмы",
+  "types": "./types/index.d.ts"
+}
